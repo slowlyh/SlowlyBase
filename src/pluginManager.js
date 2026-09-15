@@ -1,6 +1,3 @@
-// src/pluginManager.js
-// Hot-reloading plugin loader and watcher for SlowlyBase
-
 import fs from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
@@ -10,18 +7,12 @@ import chokidar from 'chokidar'
 let isWatching = false
 let watcherInstance = null
 
-/**
- * Dynamically imports a module with cache busting
- */
 async function importFresh(filePath) {
   const nonce = Date.now()
   const fileUrl = `${pathToFileURL(filePath).href}?v=${nonce}`
   return import(fileUrl)
 }
 
-/**
- * Recursively collects plugins from the plugins directory
- */
 async function collectPlugins(dir, baseDir = dir, result = []) {
   if (!fs.existsSync(dir)) return result
 
@@ -67,9 +58,6 @@ async function collectPlugins(dir, baseDir = dir, result = []) {
   return result
 }
 
-/**
- * Loads all plugins into a Map and assigns to global.plugins
- */
 export async function loadPlugins(pluginsDir) {
   const pluginList = await collectPlugins(pluginsDir)
   const registry = new Map()
@@ -98,22 +86,16 @@ export async function loadPlugins(pluginsDir) {
   }
 }
 
-/**
- * Reloads plugins programmatically
- */
 export async function reloadPlugins(pluginsDir) {
   console.log(chalk.cyan('[PLUGINS] Mereload semua plugin...'))
   return loadPlugins(pluginsDir)
 }
 
-/**
- * Initializes directory watcher for hot-reloading plugins without restart
- */
 export function initPluginWatcher(pluginsDir) {
   if (isWatching) return
 
   watcherInstance = chokidar.watch(pluginsDir, {
-    ignored: /(^|[\/\\])\../, // ignore dotfiles
+    ignored: /(^|[\/\\])\../,
     persistent: true,
     ignoreInitial: true,
     awaitWriteFinish: {

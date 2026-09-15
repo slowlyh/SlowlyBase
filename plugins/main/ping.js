@@ -1,5 +1,3 @@
-// plugins/main/ping.js
-
 export default {
   command: 'ping',
   alias: ['p'],

@@ -1,5 +1,3 @@
-// plugins/main/help.js
-
 export default {
   command: 'help',
   alias: ['panduan', 'tutor'],

@@ -1,5 +1,3 @@
-// plugins/main/speed.js
-
 import os from 'os'
 import { formatBytes, formatRuntime } from '../../src/utils.js'
 

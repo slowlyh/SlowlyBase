@@ -1,8 +1,5 @@
-// index.js
-// Entry point for SlowlyBase WhatsApp Bot
-
-import path from 'path'
-import { fileURLToPath } from 'url'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import chalk from 'chalk'
 import config from './config.js'
 import { createConnection, setupConnectionHandler } from './src/connection.js'
@@ -10,7 +7,8 @@ import { setupMessageHandler } from './src/handler.js'
 import { setupGroupHandler } from './src/groupHandler.js'
 import { setupContactHandler } from './src/contactHandler.js'
 import { loadPlugins, initPluginWatcher } from './src/pluginManager.js'
-import { initDatabase } from './src/database.js'
+import { initDatabase, closeDatabase } from './src/database.js'
+import { getSqliteBackendKind } from './src/sqliteDriver.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -19,11 +17,10 @@ const PLUGINS_DIR = path.join(__dirname, 'plugins')
 console.log(chalk.cyan(`
 ┌─────────────────────────────────────────────────────────┐
 │                   ⚡ SLOWLYBASE BOT ⚡                   │
-│   Modular WhatsApp Bot with zapo-js & SQLite Storage    │
+│    Modular WhatsApp Bot · zapo-js · Pure-JS SQLite      │
 └─────────────────────────────────────────────────────────┘
 `))
 
-// Global Process Error Trapping
 process.on('uncaughtException', (err) => {
   console.error(chalk.red('[UNCAUGHT EXCEPTION]:'), err?.stack || err?.message || err)
 })
@@ -36,26 +33,19 @@ let sock = null
 
 async function startBot() {
   try {
-    // 1. Initialize Local SQLite Database
     initDatabase()
-    console.log(chalk.green('✓ [DATABASE] SQLite database initialized.'))
+    console.log(chalk.green(`✓ [DATABASE] SQLite siap (driver: ${getSqliteBackendKind()}).`))
 
-    // 2. Load Plugins
     await loadPlugins(PLUGINS_DIR)
-
-    // 3. Initialize Hot-reload Plugin Watcher
     initPluginWatcher(PLUGINS_DIR)
 
-    // 4. Create WhatsApp Client with SQLite Session
     sock = createConnection()
 
-    // 5. Attach Handlers
     setupConnectionHandler(sock)
     setupGroupHandler(sock)
     setupContactHandler(sock)
     setupMessageHandler(sock)
 
-    // 6. Connect to WhatsApp
     console.log(chalk.yellow('[WA] Menghubungkan ke WhatsApp Web protocol...'))
     await sock.connect()
 
@@ -65,7 +55,6 @@ async function startBot() {
   }
 }
 
-// Graceful Shutdown
 let isShuttingDown = false
 async function handleShutdown(signal) {
   if (isShuttingDown) return
@@ -75,10 +64,13 @@ async function handleShutdown(signal) {
   try {
     if (sock) {
       await sock.disconnect?.()
+      sock.sqliteStore?.destroy?.()
+      sock.sqliteConnection?.close?.()
     }
-  } catch (e) {
-    // ignore
+  } catch {
+    console.error(chalk.gray('[SHUTDOWN] Koneksi ditutup dengan peringatan.'))
   }
+  closeDatabase()
   console.log(chalk.green('[SHUTDOWN] Selesai. Sampai jumpa!'))
   process.exit(0)
 }
@@ -86,4 +78,4 @@ async function handleShutdown(signal) {
 process.on('SIGINT', () => handleShutdown('SIGINT'))
 process.on('SIGTERM', () => handleShutdown('SIGTERM'))
 
-startBot()
+void startBot()

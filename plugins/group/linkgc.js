@@ -1,5 +1,3 @@
-// plugins/group/linkgc.js
-
 export default {
   command: 'linkgc',
   alias: ['linkgroup', 'grouplink'],

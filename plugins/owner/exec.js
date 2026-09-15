@@ -1,5 +1,3 @@
-// plugins/owner/exec.js
-
 import { exec } from 'child_process'
 import util from 'util'
 

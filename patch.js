@@ -11,7 +11,6 @@ console.log(`
 └──────────────────────────────────────────────┘
 `)
 
-// 1. PATCH CUSTOM NODES
 const targetFiles = [
   path.join(__dirname, 'node_modules/zapo-js/dist/esm/transport/node/builders/message.js'),
   path.join(__dirname, 'node_modules/zapo-js/dist/transport/node/builders/message.js')
@@ -48,7 +47,6 @@ for (const file of targetFiles) {
   }
 }
 
-// 2. PATCH ALBUM COLLECTION MEDIATYPE
 const albumTargets = [
   ...['dist', 'dist/esm'].flatMap((base) => [
     path.join(__dirname, `node_modules/zapo-js/${base}/protocol/message.js`),

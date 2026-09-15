@@ -1,5 +1,3 @@
-// plugins/owner/eval.js
-
 import util from 'util'
 
 export default {
@@ -14,7 +12,7 @@ export default {
 
     let result
     try {
-      // Async eval wrapper
+
       const fn = new Function('m', 'sock', 'config', 'util', `return (async () => { ${text} })()`)
       result = await fn(m, sock, config, util)
       if (typeof result !== 'string') {

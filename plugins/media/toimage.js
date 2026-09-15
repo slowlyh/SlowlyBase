@@ -1,5 +1,3 @@
-// plugins/media/toimage.js
-
 import sharp from 'sharp'
 
 export default {

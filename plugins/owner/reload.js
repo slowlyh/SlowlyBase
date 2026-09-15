@@ -1,6 +1,3 @@
-// plugins/owner/reload.js
-// Hot reload all plugins without full process restart
-
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { reloadPlugins } from '../../src/pluginManager.js'

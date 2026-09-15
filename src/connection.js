@@ -1,29 +1,18 @@
-// src/connection.js
-// WhatsApp Client connection manager with SQLite session & media wrappers
-
-import fs from 'fs'
-import path from 'path'
+import fs from 'node:fs'
+import path from 'node:path'
 import readline from 'node:readline'
 import chalk from 'chalk'
 import qrcode from 'qrcode-terminal'
 import sharp from 'sharp'
-import { createStore, WaClient, WaMediaTransferClient } from 'zapo-js'
+import { createStore, WaClient } from 'zapo-js'
 import { createSqliteStore } from '@zapo-js/store-sqlite'
 import { createMediaProcessor } from '@zapo-js/media-utils'
 import config from '../config.js'
-import {
-  resolveToBuffer,
-  detectMimetype,
-  toBase64,
-  toBuffer,
-  normalizeJid
-} from './utils.js'
+import { openSqliteConnection, getSqliteBackendKind } from './sqliteDriver.js'
+import { resolveToBuffer, detectMimetype, toBase64 } from './utils.js'
 
-let isPairingRequested = false
+const PAIRING_REQUIRED_MESSAGE = 'client is not connected'
 
-/**
- * Resolves width and height for image thumbnails
- */
 async function resolveDimensions(buffer) {
   try {
     const meta = await sharp(buffer).metadata()
@@ -33,13 +22,13 @@ async function resolveDimensions(buffer) {
   }
 }
 
-/**
- * Attaches helper methods to the socket client
- */
+function normalizePhoneNumber(input) {
+  const digits = String(input ?? '').replace(/\D/g, '')
+  if (digits.length <= 6) return ''
+  return digits.replace(/^0+/, '')
+}
+
 export function attachSocketHelpers(sock) {
-  /**
-   * Send reaction to a message
-   */
   sock.sendReact = async (jid, emoji, target) => {
     if (!target) return
 
@@ -54,9 +43,6 @@ export function attachSocketHelpers(sock) {
     })
   }
 
-  /**
-   * Send audio as Voice Note (PTT)
-   */
   sock.sendVoiceNote = async (jid, input, options = {}) => {
     const { quote, mentions, ...rest } = options
     const quoteKey = quote?.raw ?? quote
@@ -73,9 +59,6 @@ export function attachSocketHelpers(sock) {
     })
   }
 
-  /**
-   * Upload thumbnail for link previews
-   */
   sock.uploadThumbnail = async (image, options = {}) => {
     const { favicon = false, mimetype: mimetypeOverride } = options
     const buffer = await resolveToBuffer(image)
@@ -114,9 +97,6 @@ export function attachSocketHelpers(sock) {
     return result
   }
 
-  /**
-   * Send link preview message with custom thumbnail
-   */
   sock.sendThumbnail = async (jid, options = {}) => {
     const { thumbnail, title, body, url, text, quote, ...rest } = options
 
@@ -146,9 +126,6 @@ export function attachSocketHelpers(sock) {
     })
   }
 
-  /**
-   * Send image
-   */
   sock.sendImage = async (jid, input, caption = '', options = {}) => {
     const buffer = await resolveToBuffer(input)
     const mimetype = await detectMimetype(buffer)
@@ -167,9 +144,6 @@ export function attachSocketHelpers(sock) {
     })
   }
 
-  /**
-   * Send video
-   */
   sock.sendVideo = async (jid, input, caption = '', options = {}) => {
     const buffer = await resolveToBuffer(input)
     const mimetype = await detectMimetype(buffer)
@@ -188,9 +162,6 @@ export function attachSocketHelpers(sock) {
     })
   }
 
-  /**
-   * Send document
-   */
   sock.sendDocument = async (jid, input, fileName = 'file', mimetypeOverride = null, options = {}) => {
     const buffer = await resolveToBuffer(input)
     const mimetype = mimetypeOverride || await detectMimetype(buffer)
@@ -213,51 +184,156 @@ export function attachSocketHelpers(sock) {
   return sock
 }
 
-/**
- * Handles pairing code interactive request
- */
-async function requestPairing(sock) {
-  try {
-    let phoneNumber = config.pairingNumber ? String(config.pairingNumber).replace(/\D/g, '') : ''
+export function isPairingRateLimitError(error) {
+  const message = String(error?.message || error || '').toLowerCase()
+  if (!message) return false
 
-    if (!phoneNumber) {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-      phoneNumber = (await new Promise(res =>
-        rl.question(chalk.cyan.bold('\n[PAIRING] Masukkan nomor WhatsApp bot (contoh 628xxx): '), res)
-      )).replace(/\D/g, '')
-      rl.close()
-    }
+  return (
+    message.includes('rate-overlimit') ||
+    message.includes('429') ||
+    message.includes('resource-limit') ||
+    message.includes('419') ||
+    message.includes('limit') ||
+    message.includes('too many')
+  )
+}
 
-    if (!phoneNumber) {
-      console.log(chalk.yellow('[PAIRING] Nomor kosong, beralih menunggu scan QR...'))
-      return
-    }
+export function isPairingNotReadyError(error) {
+  const message = String(error?.message || error || '').toLowerCase()
+  return message.includes(PAIRING_REQUIRED_MESSAGE)
+}
 
-    let customCode = config.customPairing ? String(config.customPairing).trim().toUpperCase() : null
-    if (customCode && (customCode.length !== 8 || !/^[1-9A-HJ-NP-TV-Z]{8}$/.test(customCode))) {
-      console.log(chalk.red.bold(`[PAIRING] Custom code "${customCode}" tidak valid, menggunakan kode acak.`))
-      customCode = null
-    }
+function createPairingController(sock) {
+  let issued = false
+  let inFlight = false
+  let attemptCount = 0
+  let lastAttemptAt = 0
+  let issuedAt = 0
 
-    const code = customCode
-      ? await sock.auth.requestPairingCode(phoneNumber, true, customCode)
-      : await sock.auth.requestPairingCode(phoneNumber)
+  const maxAttempts = Number.isFinite(config.pairingMaxRetries) ? config.pairingMaxRetries : 3
+  const retryDelayMs = Number.isFinite(config.pairingRetryDelayMs) ? config.pairingRetryDelayMs : 15000
+  const cooldownMs = Number.isFinite(config.pairingCooldownMs) ? config.pairingCooldownMs : 20000
+  const codeTtlMs = Number.isFinite(config.pairingCodeTtlMs) ? config.pairingCodeTtlMs : 160000
+  const notReadyDelayMs = Number.isFinite(config.pairingNotReadyDelayMs) ? config.pairingNotReadyDelayMs : 3000
 
-    const formatted = code?.match(/.{1,4}/g)?.join('-') ?? code
+  function formatCode(code) {
+    return String(code || '').match(/.{1,4}/g)?.join('-') ?? code
+  }
 
+  function printCode(code) {
+    const formatted = formatCode(code)
     console.log(chalk.bgMagenta.white.bold('\n  ┌─────────────────────────────────┐  '))
     console.log(chalk.bgMagenta.white.bold('  │         KODE PAIRING ANDA       │  '))
     console.log(chalk.bgBlack.greenBright.bold(`  │            ${formatted}         │  `))
     console.log(chalk.bgMagenta.white.bold('  └─────────────────────────────────┘  \n'))
     console.log(chalk.yellow('Buka WhatsApp di HP > Perangkat Tertaut > Tautkan dengan nomor telepon.\n'))
-  } catch (err) {
-    console.error(chalk.red('[PAIRING] Gagal meminta kode pairing:'), err?.message || err)
+  }
+
+  async function askPhoneNumber() {
+    if (config.pairingNumber) return normalizePhoneNumber(config.pairingNumber)
+
+    if (!process.stdin.isTTY) return ''
+
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+    try {
+      const answer = await new Promise((resolve) =>
+        rl.question(chalk.cyan.bold('\n[PAIRING] Masukkan nomor WhatsApp bot (contoh 628xxx): '), resolve)
+      )
+      return normalizePhoneNumber(answer)
+    } finally {
+      rl.close()
+    }
+  }
+
+  function resolveCustomCode() {
+    if (!config.customPairing) return null
+
+    const customCode = String(config.customPairing).trim().toUpperCase()
+    if (customCode.length !== 8 || !/^[1-9A-HJ-NP-TV-Z]{8}$/.test(customCode)) {
+      console.log(chalk.red.bold(`[PAIRING] Custom code "${customCode}" tidak valid, menggunakan kode acak.`))
+      return null
+    }
+    return customCode
+  }
+
+  async function requestCode() {
+    inFlight = true
+
+    try {
+      const phoneNumber = await askPhoneNumber()
+      if (!phoneNumber) {
+        console.log(chalk.yellow('[PAIRING] Nomor tidak tersedia, beralih menunggu scan QR...'))
+        return
+      }
+
+      while (attemptCount < maxAttempts) {
+        attemptCount += 1
+
+        try {
+          const customCode = resolveCustomCode()
+          const code = customCode
+            ? await sock.auth.requestPairingCode(phoneNumber, true, customCode)
+            : await sock.auth.requestPairingCode(phoneNumber)
+
+          issued = true
+          issuedAt = Date.now()
+          printCode(code)
+          return
+        } catch (err) {
+          if (isPairingNotReadyError(err)) {
+            const delay = notReadyDelayMs * attemptCount
+            console.log(chalk.yellow(
+              `[PAIRING] Koneksi belum siap (${err.message}). Mencoba lagi dalam ${Math.round(delay / 1000)} detik...`
+            ))
+            await new Promise((r) => setTimeout(r, delay))
+            continue
+          }
+
+          if (isPairingRateLimitError(err)) {
+            const delay = retryDelayMs * attemptCount
+            console.log(chalk.red.bold(`[PAIRING] Ditolak server (limit/rate-limit): ${err.message}`))
+            console.log(chalk.yellow(
+              `[PAIRING] WhatsApp membatasi permintaan kode per nomor. Menunggu ${Math.round(delay / 1000)} detik...`
+            ))
+            console.log(chalk.gray(
+              '[PAIRING] Tips: hapus perangkat tertaut yang tidak terpakai di HP, lalu coba lagi. Jika tetap gagal, tunggu 15-40 menit.'
+            ))
+
+            if (attemptCount < maxAttempts) {
+              await new Promise((r) => setTimeout(r, delay))
+              continue
+            }
+
+            console.log(chalk.yellow('[PAIRING] Batas percobaan tercapai. Bot menunggu QR/pairing ulang otomatis.'))
+            return
+          }
+
+          console.error(chalk.red('[PAIRING] Gagal meminta kode pairing:'), err?.message || err)
+          return
+        }
+      }
+    } finally {
+      inFlight = false
+      lastAttemptAt = Date.now()
+    }
+  }
+
+  return {
+    request() {
+      if (inFlight) return
+      if (Date.now() - lastAttemptAt < cooldownMs) return
+      if (issued && Date.now() - issuedAt < codeTtlMs) return
+      void requestCode()
+    },
+    reset() {
+      issued = false
+      attemptCount = 0
+      lastAttemptAt = 0
+      issuedAt = 0
+    }
   }
 }
 
-/**
- * Creates connection socket and initializes SQLite storage
- */
 export function createConnection() {
   const sessionDir = path.dirname(config.sessionPath)
   if (!fs.existsSync(sessionDir)) {
@@ -265,10 +341,16 @@ export function createConnection() {
     console.log(chalk.gray(`[SESSION] Direktori "${sessionDir}" dibuat.`))
   }
 
-  // Configure SQLite store for all providers
+  const connection = openSqliteConnection({
+    path: config.sessionPath,
+    pragmas: config.sqlitePragmas
+  })
+
+  console.log(chalk.gray(`[SESSION] Driver SQLite: ${getSqliteBackendKind()} (tanpa kompilasi binary).`))
+
   const store = createStore({
     backends: {
-      sqlite: createSqliteStore({ path: config.sessionPath })
+      sqlite: createSqliteStore({ connection })
     },
     providers: {
       auth: 'sqlite',
@@ -300,6 +382,9 @@ export function createConnection() {
       store,
       sessionId: config.sessionId || 'default',
       recoverFromClientTooOld: true,
+      deviceBrowser: config.deviceBrowser || 'Chrome',
+      deviceOsDisplayName: config.deviceOsDisplayName || 'Windows',
+      markOnlineOnConnect: false,
       media: {
         processor: createMediaProcessor(),
         generateThumbnail: true,
@@ -310,45 +395,80 @@ export function createConnection() {
     silentLogger
   )
 
+  sock.sqliteConnection = connection
+  sock.sqliteStore = store
+
   attachSocketHelpers(sock)
 
   return sock
 }
 
-/**
- * Sets up connection event listeners and reconnector
- */
 export function setupConnectionHandler(sock) {
   let reconnectAttempts = 0
-  const maxReconnect = 10
+  let reconnectTimer = null
+  let isStopped = false
+
+  const maxReconnect = Number.isFinite(config.maxReconnectAttempts) ? config.maxReconnectAttempts : 10
+  const pairing = createPairingController(sock)
+
+  function clearReconnectTimer() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+  }
+
+  async function scheduleReconnect() {
+    if (isStopped) return
+    if (reconnectAttempts >= maxReconnect) {
+      console.log(chalk.red.bold('[WA] Gagal reconnect setelah batas percobaan maksimal.'))
+      return
+    }
+
+    reconnectAttempts += 1
+    const delay = Math.min(30000, 2000 * 2 ** reconnectAttempts)
+
+    console.log(chalk.yellow(
+      `[WA] Mencoba menyambung kembali dalam ${Math.round(delay / 1000)} detik (percobaan ${reconnectAttempts}/${maxReconnect})...`
+    ))
+
+    clearReconnectTimer()
+    reconnectTimer = setTimeout(async () => {
+      reconnectTimer = null
+      if (isStopped) return
+      try {
+        await sock.connect()
+      } catch (err) {
+        console.error(chalk.red('[WA] Reconnect error:'), err?.message || err)
+        void scheduleReconnect()
+      }
+    }, delay)
+  }
 
   sock.on('connection', async (event) => {
     if (event.status === 'open') {
       reconnectAttempts = 0
+      clearReconnectTimer()
       console.log(chalk.bgGreen.black.bold('\n  🚀 [SLOWLYBASE] BOT BERHASIL TERHUBUNG KE WHATSAPP!  \n'))
       return
     }
 
     if (event.isLogout) {
+      isStopped = true
+      clearReconnectTimer()
+      pairing.reset()
       console.log(chalk.bgRed.white.bold('\n  ⚠️ [SLOWLYBASE] Sesi dikeluarkan dari WhatsApp! Perlu pairing ulang.  \n'))
       return
     }
 
-    console.log(chalk.yellow(`[WA] Koneksi terputus: ${event.reason || 'Network timeout'}`))
-
-    if (reconnectAttempts < maxReconnect) {
-      reconnectAttempts++
-      const delay = Math.min(30000, 2000 * 2 ** reconnectAttempts)
-      console.log(chalk.yellow(`[WA] Mencoba menyambung kembali dalam ${delay / 1000} detik (percobaan ${reconnectAttempts}/${maxReconnect})...`))
-      await new Promise(r => setTimeout(r, delay))
-      try {
-        await sock.connect()
-      } catch (err) {
-        console.error(chalk.red('[WA] Reconnect error:'), err.message)
-      }
-    } else {
-      console.log(chalk.red.bold('[WA] Gagal reconnect setelah batas percobaan maksimal.'))
+    if (event.reason === 'client_disconnected') {
+      isStopped = true
+      clearReconnectTimer()
+      return
     }
+
+    console.log(chalk.yellow(`[WA] Koneksi terputus: ${event.reason || 'Network timeout'}`))
+    await scheduleReconnect()
   })
 
   sock.on('auth_qr', ({ qr, ttlMs }) => {
@@ -356,20 +476,21 @@ export function setupConnectionHandler(sock) {
       console.log(chalk.cyan.bold('\n── SCAN QR CODE DI BAWAH INI ──'))
       qrcode.generate(qr, { small: true })
       console.log(chalk.gray(`(Berlaku ${Math.round(ttlMs / 1000)} detik)\n`))
-    } else if (!isPairingRequested) {
-      isPairingRequested = true
-      void requestPairing(sock)
+    } else {
+      pairing.request()
     }
   })
 
   sock.on('auth_pairing_required', () => {
-    if (config.usePairingCode && !isPairingRequested) {
-      isPairingRequested = true
-      void requestPairing(sock)
-    }
+    if (config.usePairingCode) pairing.request()
+  })
+
+  sock.on('auth_pairing_code', ({ code }) => {
+    if (code) console.log(chalk.green(`[PAIRING] Kode aktif: ${code.match(/.{1,4}/g)?.join('-') ?? code}`))
   })
 
   sock.on('auth_paired', ({ credentials }) => {
+    pairing.reset()
     console.log(chalk.green.bold(`\n✅ [AUTH] Berhasil terotentikasi sebagai ${chalk.yellow(credentials.meJid)}\n`))
   })
 
@@ -383,5 +504,7 @@ export function setupConnectionHandler(sock) {
 export default {
   createConnection,
   setupConnectionHandler,
-  attachSocketHelpers
+  attachSocketHelpers,
+  isPairingRateLimitError,
+  isPairingNotReadyError
 }

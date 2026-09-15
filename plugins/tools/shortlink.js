@@ -1,5 +1,3 @@
-// plugins/tools/shortlink.js
-
 export default {
   command: 'shortlink',
   alias: ['shorturl', 'tinyurl', 'pendekkan'],

@@ -1,5 +1,3 @@
-// plugins/tools/get.js
-
 import { formatBytes } from '../../src/utils.js'
 
 export default {
@@ -40,7 +38,6 @@ export default {
         return sock.sendVoiceNote(m.chat, buffer, { quote: m.raw })
       }
 
-      // Default fallback: document
       const buffer = Buffer.from(await res.arrayBuffer())
       const fileName = url.split('/').pop().split('?')[0] || 'download'
       return sock.sendDocument(m.chat, buffer, fileName, contentType, { quote: m.raw })

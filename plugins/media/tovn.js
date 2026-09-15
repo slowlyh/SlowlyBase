@@ -1,5 +1,3 @@
-// plugins/media/tovn.js
-
 export default {
   command: 'tovn',
   alias: ['vn', 'ptt'],

@@ -1,5 +1,3 @@
-// plugins/main/menu.js
-
 import os from 'os'
 import { formatRuntime } from '../../src/utils.js'
 
@@ -13,7 +11,6 @@ export default {
     const uptime = formatRuntime(process.uptime())
     const totalCommands = pluginList?.length || 0
 
-    // Group commands by category
     const categories = {}
     for (const item of (pluginList || [])) {
       const cat = item.category || 'other'

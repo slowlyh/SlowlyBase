@@ -1,5 +1,3 @@
-// plugins/media/react.js
-
 export default {
   command: 'react',
   alias: ['r'],

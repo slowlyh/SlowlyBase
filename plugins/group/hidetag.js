@@ -1,5 +1,3 @@
-// plugins/group/hidetag.js
-
 import { getCachedGroupMetadata } from '../../src/groupHandler.js'
 
 export default {

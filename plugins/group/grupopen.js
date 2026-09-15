@@ -1,5 +1,3 @@
-// plugins/group/grupopen.js
-
 export default {
   command: 'grupopen',
   alias: ['buka', 'opengroup', 'bukagrup'],

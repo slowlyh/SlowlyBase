@@ -1,6 +1,3 @@
-// src/handler.js
-// Message serializer, permission checker, and plugin dispatcher for SlowlyBase
-
 import chalk from 'chalk'
 import { getContentType } from 'zapo-js'
 import config from '../config.js'
@@ -13,9 +10,6 @@ import {
   getCachedGroupMetadata
 } from './groupHandler.js'
 
-/**
- * Extracts command and prefix from message text
- */
 export function extractCommand(text) {
   if (!text || typeof text !== 'string') return { prefix: '', command: '', args: [], query: '' }
 
@@ -42,9 +36,6 @@ export function extractCommand(text) {
   return { prefix: '', command: '', args: [], query: '' }
 }
 
-/**
- * Serializes quoted message object
- */
 function serializeQuoted(contextInfo, chatJid, sock) {
   if (!contextInfo?.quotedMessage) return null
 
@@ -81,9 +72,6 @@ function serializeQuoted(contextInfo, chatJid, sock) {
   }
 }
 
-/**
- * Serializes incoming WhatsApp message into a unified `m` object
- */
 export async function serializeMessage(event, sock) {
   if (!event?.message) return null
 
@@ -138,7 +126,6 @@ export async function serializeMessage(event, sock) {
     quoted: serializeQuoted(contextInfo, chat, sock)
   }
 
-  // Pre-fetch group metadata if needed
   if (isGroup) {
     if (!getCachedGroupMetadata(chat)) {
       await getGroupMetadata(chat, sock).catch(() => null)
@@ -149,9 +136,6 @@ export async function serializeMessage(event, sock) {
     m.isBotAdmin = isBotAdminInGroup(chat, sock)
   }
 
-  /**
-   * Universal reply helper
-   */
   m.reply = async (content, options = {}) => {
     let payload = content
     if (typeof content === 'string') {
@@ -167,14 +151,8 @@ export async function serializeMessage(event, sock) {
     })
   }
 
-  /**
-   * Reaction helper
-   */
   m.react = (emoji) => sock.sendReact(chat, emoji, m.id)
 
-  /**
-   * Media downloader for the current message
-   */
   m.download = async () => {
     if (!m.isMedia) throw new Error('Pesan ini tidak berisi media.')
     if (typeof sock.message?.downloadBytes === 'function') {
@@ -186,22 +164,17 @@ export async function serializeMessage(event, sock) {
   return m
 }
 
-/**
- * Message Event Listener & Command Dispatcher
- */
 export function setupMessageHandler(sock) {
   sock.on('message', async (event) => {
     try {
-      // Ignore broadcast status messages
+
       if (event.key?.remoteJid === 'status@broadcast') return
 
       const m = await serializeMessage(event, sock)
       if (!m) return
 
-      // Save/update contact in SQLite database
       trackContact(m.sender, m.pushName)
 
-      // Print clean log
       if (config.logMessages) {
         const time = new Date().toLocaleTimeString('id-ID', { hour12: false })
         const chatType = m.isGroup ? chalk.yellow(`[GRUP: ${m.groupName}]`) : chalk.green('[PRIVATE]')
@@ -211,42 +184,33 @@ export function setupMessageHandler(sock) {
         )
       }
 
-      // If no command detected, skip
       if (!m.command) return
 
-      // Find registered plugin
       const plugin = global.plugins?.get(m.command)
       if (!plugin) return
 
-      // 1. Check self mode
       if (config.selfMode && !m.isOwner) return
 
-      // 2. Check Owner Only
       if (plugin.ownerOnly && !m.isOwner) {
         return m.reply(config.pesan.ownerOnly)
       }
 
-      // 3. Check Group Only
       if (plugin.groupOnly && !m.isGroup) {
         return m.reply(config.pesan.groupOnly)
       }
 
-      // 4. Check Private Only
       if (plugin.privateOnly && m.isGroup) {
         return m.reply(config.pesan.privateOnly)
       }
 
-      // 5. Check Admin Only
       if (plugin.adminOnly && m.isGroup && !m.isAdmin && !m.isOwner) {
         return m.reply(config.pesan.adminOnly)
       }
 
-      // 6. Check Bot Admin Only
       if (plugin.botAdminOnly && m.isGroup && !m.isBotAdmin) {
         return m.reply(config.pesan.botAdmin)
       }
 
-      // Execute plugin with error isolation
       await plugin.execute(m, {
         sock,
         config,
@@ -266,7 +230,7 @@ export function setupMessageHandler(sock) {
           text: `${config.pesan.error}\n\n*Error Detail:* ${err?.message || 'Unknown error'}`
         }, { quote: event })
       } catch (sendErr) {
-        // ignore fallback send error
+
       }
     }
   })

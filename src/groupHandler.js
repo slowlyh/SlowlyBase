@@ -1,16 +1,10 @@
-// src/groupHandler.js
-// Handles WhatsApp group events, participants caching, and admin verification
-
 import chalk from 'chalk'
 import { normalizeJid, stripDeviceId } from './utils.js'
 import { upsertGroup, getGroup } from './database.js'
 
 const groupCache = new Map()
-const CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes
+const CACHE_TTL_MS = 10 * 60 * 1000
 
-/**
- * Retrieves group metadata from cache or fetches from WhatsApp
- */
 export async function getGroupMetadata(jid, sock, force = false) {
   if (!jid || !jid.endsWith('@g.us')) return null
 
@@ -29,12 +23,11 @@ export async function getGroupMetadata(jid, sock, force = false) {
         data: metadata
       })
 
-      // Persist to local SQLite
       upsertGroup(jid, metadata.subject)
       return metadata
     }
   } catch (err) {
-    // If rate-limited or error, return cached if exists
+
     if (cached) return cached.data
   }
 
@@ -45,9 +38,6 @@ export function getCachedGroupMetadata(jid) {
   return groupCache.get(jid)?.data || null
 }
 
-/**
- * Checks if a participant is admin in group
- */
 export function isAdminInGroup(chatJid, senderJid) {
   const meta = getCachedGroupMetadata(chatJid)
   if (!meta || !meta.participants) return false
@@ -60,9 +50,6 @@ export function isAdminInGroup(chatJid, senderJid) {
   return Boolean(participant?.isAdmin || participant?.isSuperAdmin || participant?.type === 'admin' || participant?.type === 'superadmin')
 }
 
-/**
- * Checks if bot itself is admin in group
- */
 export function isBotAdminInGroup(chatJid, sock) {
   const meta = getCachedGroupMetadata(chatJid)
   if (!meta || !meta.participants) return false
@@ -74,9 +61,6 @@ export function isBotAdminInGroup(chatJid, sock) {
   return isAdminInGroup(chatJid, botPn) || isAdminInGroup(chatJid, botLid)
 }
 
-/**
- * Sets up group event listeners
- */
 export function setupGroupHandler(sock) {
   sock.on('group', async (event) => {
     const jid = event?.groupJid || event?.chatJid
@@ -89,7 +73,6 @@ export function setupGroupHandler(sock) {
       chalk.blue(`[GROUP EVENT] JID: ${jid} | Action: ${action} | Participants: ${participants.length}`)
     )
 
-    // Invalidate and refresh cache
     await getGroupMetadata(jid, sock, true)
   })
 }

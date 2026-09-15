@@ -15,7 +15,7 @@ SlowlyBase adalah base script bot WhatsApp yang dirancang agar **sederhana, muda
 
 - 🧩 **Sistem Plugin Modular**: Setiap fitur berada dalam file terpisah di folder `plugins/<kategori>/`.
 - 🔄 **Hot Reload Tanpa Restart**: Perubahan kode plugin langsung di-reload secara otomatis tanpa harus mematikan dan menyalakan ulang proses Node.js.
-- 🗄️ **Penyimpanan SQLite**: Penyimpanan sesi WhatsApp memakai SQLite melalui `@zapo-js/store-sqlite` yang cepat, tidak mudah korup, dan hemat memori.
+- 🗄️ **Penyimpanan SQLite Pure-JS**: Sesi WhatsApp dan database lokal memakai SQLite **tanpa kompilasi binary** — otomatis memakai `node:sqlite` bawaan Node.js (22.5+), dengan fallback ke `node-sqlite3-wasm` (WebAssembly). Tidak perlu `better-sqlite3` atau build tools.
 - 🛡️ **Isolasi Error Antar-Plugin**: Error pada satu plugin tidak akan merusak alur pesan atau menjatuhkan bot.
 - 📡 **Handler Lengkap**:
   - **Message Handler**: Parsing pesan otomatis, serialisasi objek `m`, lazy getters, dan downloader.
@@ -42,7 +42,8 @@ SlowlyBase/
 │   └── .gitkeep
 ├── src/
 │   ├── connection.js       # Client connection, SQLite store, pairing, reconnector & media helper
-│   ├── database.js         # SQLite database helper (better-sqlite3) untuk kontak & grup
+│   ├── sqliteDriver.js     # Driver SQLite pure-JS (node:sqlite / node-sqlite3-wasm)
+│   ├── database.js         # SQLite database helper (pure-JS) untuk kontak & grup
 │   ├── handler.js          # Message serializer & command dispatcher
 │   ├── groupHandler.js     # Handler event & cache metadata grup
 │   ├── contactHandler.js   # Handler kontak & database tracker
@@ -84,8 +85,9 @@ SlowlyBase/
 ## 🚀 Panduan Instalasi & Menjalankan
 
 ### 1. Prasyarat
-- Node.js versi 20 atau yang lebih baru
+- Node.js versi 20 atau yang lebih baru (disarankan 22.5+ agar memakai `node:sqlite` bawaan)
 - npm / yarn / pnpm
+- Tidak perlu compiler C++ / Python / build tools (SQLite sudah pure-JS/WASM)
 
 ### 2. Clone Repository
 ```bash
@@ -110,9 +112,22 @@ export const config = {
   usePairingCode: true,         // true untuk pairing code, false untuk scan QR
   pairingNumber: '',            // Masukkan nomor WhatsApp bot jika ingin otomatis
   customPairing: '',            // 8 karakter custom pairing (opsional)
+
+  pairingMaxRetries: 3,         // Batas percobaan saat server menolak (limit/rate-limit)
+  pairingRetryDelayMs: 15000,   // Jeda dasar antar percobaan (dikalikan nomor percobaan)
+  pairingCooldownMs: 20000,     // Jeda minimum antar permintaan kode
+  pairingCodeTtlMs: 160000,     // Masa berlaku kode sebelum boleh minta ulang
+  pairingNotReadyDelayMs: 3000, // Jeda saat koneksi belum siap
+
+  deviceBrowser: 'Chrome',      // Label browser di "Perangkat Tertaut"
+  deviceOsDisplayName: 'Windows',
   ...
 }
 ```
+
+> **Catatan Pairing Code**: WhatsApp membatasi permintaan kode per nomor. Jika server menolak dengan error `limit` / `rate-overlimit`, bot akan otomatis menunggu (backoff) lalu mencoba lagi sampai `pairingMaxRetries`. Jika tetap gagal, hapus perangkat tertaut yang tidak terpakai di HP, atau tunggu 15-40 menit sebelum mencoba lagi. Jika `pairingNumber` dikosongkan pada lingkungan tanpa TTY (mis. Docker), bot otomatis beralih ke mode QR.
+
+> **Catatan Driver SQLite**: Secara default bot memakai `node:sqlite` (bawaan Node.js 22.5+). Untuk memaksa driver WebAssembly, set env `SLOWLYBASE_SQLITE_DRIVER=wasm`. Keduanya **tidak memerlukan kompilasi binary**.
 
 ### 5. Jalankan Bot
 ```bash

@@ -1,5 +1,3 @@
-// plugins/tools/qwa.js
-
 export default {
   command: 'qwa',
   alias: ['walink', 'wameme'],

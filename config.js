@@ -1,37 +1,46 @@
-// config.js
-// Central configuration for SlowlyBase WhatsApp Bot
-
-import fs from 'fs'
-import { fileURLToPath } from 'url'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 const __filename = fileURLToPath(import.meta.url)
 
 export const config = {
-  // Bot & Owner Identity
   botName: 'SlowlyBase',
   ownerName: 'Hyuu',
-  ownerNumber: '6281234567890', // Nomor owner (dengan kode negara tanpa +)
-  
-  // Command & Prefix Settings
+  ownerNumber: '6281234567890',
+
   prefixes: ['.', '#', '!', '/'],
-  noPrefix: false, // Set true jika ingin bot merespon perintah tanpa prefix
-  selfMode: false, // Set true jika hanya owner yang boleh menggunakan bot
-  
-  // Authentication & Pairing
-  usePairingCode: true, // true = Pairing Code, false = QR Code Terminal
-  pairingNumber: '',    // Masukkan nomor bot di sini jika tidak ingin ketik saat start
-  customPairing: '',    // Custom 8-karakter pairing code (opsional, dilarang huruf O, I, U, 0)
-  
-  // Storage & Session Paths (SQLite)
+  noPrefix: false,
+  selfMode: false,
+
+  usePairingCode: true,
+  pairingNumber: '',
+  customPairing: '',
+
+  pairingMaxRetries: 3,
+  pairingRetryDelayMs: 15000,
+  pairingCooldownMs: 20000,
+  pairingCodeTtlMs: 160000,
+  pairingNotReadyDelayMs: 3000,
+
+  deviceBrowser: 'Chrome',
+  deviceOsDisplayName: 'Windows',
+
+  maxReconnectAttempts: 10,
+
   sessionPath: 'session/session.sqlite',
   sessionId: 'default',
   databasePath: 'session/database.sqlite',
 
-  // Logging & Debug
+  sqlitePragmas: [
+    'journal_mode = WAL',
+    'synchronous = NORMAL',
+    'busy_timeout = 5000',
+    'foreign_keys = ON'
+  ],
+
   logMessages: true,
   logAllEvents: false,
 
-  // Default Template Messages
   pesan: {
     wait: '⏳ Sedang diproses, mohon tunggu...',
     done: '✅ Berhasil dilakukan!',
@@ -44,9 +53,6 @@ export const config = {
   }
 }
 
-/**
- * Dynamic configuration updater (persists changes to config.js)
- */
 export function updateConfig(key, value) {
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
     console.error(`[CONFIG] Gagal update key "${key}": object value tidak didukung secara otomatis.`)

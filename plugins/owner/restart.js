@@ -1,5 +1,3 @@
-// plugins/owner/restart.js
-
 export default {
   command: 'restart',
   alias: ['reboot'],

@@ -1,5 +1,3 @@
-// plugins/owner/setprefix.js
-
 import { updateConfig } from '../../config.js'
 
 export default {

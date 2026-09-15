@@ -1,5 +1,3 @@
-// plugins/group/kick.js
-
 import { normalizeJid } from '../../src/utils.js'
 
 export default {

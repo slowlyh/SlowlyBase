@@ -1,5 +1,3 @@
-// plugins/media/thumbnail.js
-
 export default {
   command: 'thumbnail',
   alias: ['thumb', 'linkpreview'],
@@ -7,7 +5,7 @@ export default {
   description: 'Mengirim link preview dengan custom thumbnail gambar',
 
   async execute(m, { sock, args }) {
-    // Format: .thumbnail <url> [title]
+
     const target = m.quoted?.isMedia ? m.quoted : m.isMedia ? m : null
     const url = args[0] || 'https://github.com/slowlyh/SlowlyBase'
     const title = args.slice(1).join(' ') || 'SlowlyBase WhatsApp Bot'

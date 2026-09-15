@@ -1,5 +1,3 @@
-// plugins/group/grupclose.js
-
 export default {
   command: 'grupclose',
   alias: ['tutup', 'closegroup', 'tutupgrup'],
